@@ -1,0 +1,553 @@
+---
+title: "Fossil_Tablet error"
+author: "Menghan Fu"
+date: "2026-06-17"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tibble)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+baseline_summary <- read.csv("simulation_outputs/baseline_summary.csv")
+summary_cv <- read.csv("simulation_outputs/summary_cv.csv")
+summary_N1 <- read.csv("simulation_outputs/summary_N1.csv")
+summary_ratio <- read.csv("simulation_outputs/summary_ratio.csv")
+```
+
+
+```{r, eval = FALSE}
+# Generate target particles
+  points <- tibble(
+    x = runif(n_target, min = 0, max = region_side),
+    y = runif(n_target, min = 0, max = region_side)
+  )
+  
+# Known average marker dose used in the estimator
+  known_marker_dose <- N1 * tablet_mean
+  
+# Generate per-tablet marker doses, then sum them
+  tablet_sd <- tablet_mean * tablet_cv
+  tablet_doses <- rnorm(N1, mean = tablet_mean, sd = tablet_sd)
+  tablet_doses <- pmax(round(tablet_doses), 1)
+  
+  true_marker_total <- sum(tablet_doses)
+
+# Generate marker particles
+  markers <- tibble(
+    x = runif(true_marker_total, min = 0, max = region_side),
+    y = runif(true_marker_total, min = 0, max = region_side)
+  )
+
+```
+
+
+# Baseline analysis
+
+```{r, eval = FALSE}
+set.seed(456)
+
+baseline_result <- simulate_fovs_repeated(
+  n_rep = 5000,
+  n_target = 10000,
+  N1 = 1,
+  tablet_mean = 5000,
+  tablet_cv = 0,
+  region_side = 1,
+  fov_size = 0.1,
+  n_cal = 20,
+  n_ext = 20,
+  omega = 2
+)
+
+baseline_summary <- baseline_result$summary
+```
+
+```{r}
+baseline_summary %>%
+  select(
+    tablet_cv,
+    mean_true_conc,
+    mean_estimated_conc,
+    mean_theoretical_error,
+    empirical_cv,
+    mean_bias,
+    rmse,
+    mean_effort,
+  ) %>%
+  knitr::kable(digits = 2, caption = "Baseline simulation results")
+```
+
+# Tablet CV analysis
+## Simulation results across tablet CV levels
+
+```{r, eval=FALSE}
+tablet_cv_levels <- c(0, 0.01, 0.03, 0.05, 0.07, 0.09, 0.11)
+
+results_cv <- vector("list", length(tablet_cv_levels))
+
+for (i in seq_along(tablet_cv_levels)) {
+  results_cv[[i]] <- simulate_fovs_repeated(
+    n_rep = 5000,
+    n_target = 10000,
+    N1 = 1,
+    tablet_mean = 5000,
+    tablet_cv = tablet_cv_levels[i],
+    region_side = 1,
+    fov_size = 0.1,
+    n_cal = 20,
+    n_ext = 20,
+    omega = 2
+  )$summary
+}
+
+summary_cv <- bind_rows(results_cv)
+```
+
+
+```{r}
+summary_cv %>%
+  select(
+    tablet_cv,
+    mean_true_conc,
+    mean_estimated_conc,
+    mean_theoretical_error,
+    empirical_cv,
+    mean_bias,
+    rmse,
+    mean_effort,
+  ) %>%
+  knitr::kable(digits = 2, caption = "Simulation results across tablet CV levels")
+```
+
+## Plot: tablet CV and total error
+
+```{r}
+ggplot(summary_cv, aes(x = tablet_cv * 100, y = mean_theoretical_error)) +
+  geom_line(linewidth = 1, colour = "blue") +
+  geom_point(size = 3, colour = "blue") +
+  labs(
+    title = "Effect of tablet CV on total error",
+    x = "Tablet CV (%)",
+    y = "Mean total error (%)"
+  )
+```
+
+
+## Error decomposition across tablet CV levels
+
+```{r}
+summary_cv %>%
+  select(
+    tablet_cv,
+    mean_tablet_term,
+    mean_calibration_term,
+    mean_marker_term,
+    mean_theoretical_error
+  ) %>%
+  knitr::kable(digits = 2, caption = "Error decomposition across tablet CV levels")
+```
+
+```{r}
+summary_cv <- summary_cv %>%
+  mutate(
+    tablet_share = mean_tablet_term^2 / mean_theoretical_error^2,
+    calibration_share = mean_calibration_term^2 / mean_theoretical_error^2,
+    marker_share = mean_marker_term^2 / mean_theoretical_error^2
+  )
+```
+
+
+```{r}
+summary_cv_share_long <- summary_cv %>%
+  select(
+    tablet_cv,
+    tablet_share,
+    calibration_share,
+    marker_share
+  ) %>%
+  tidyr::pivot_longer(
+    cols = c(tablet_share, calibration_share, marker_share),
+    names_to = "component",
+    values_to = "share"
+  )
+```
+
+
+```{r}
+ggplot(summary_cv_share_long, aes(x = factor(tablet_cv), y = share, fill = component)) +
+  geom_col() +
+  labs(
+    title = "Relative contributions of error components across tablet CV levels",
+    x = "Tablet CV",
+    y = "Proportion of total error",
+    fill = "Component"
+  )
+```
+
+
+# N1 analysis
+## Simulation results across numbers of tablets
+
+```{r, eval=FALSE}
+N1_levels <- c(1, 2, 4, 6)
+
+total_marker_dose <- 5000
+tablet_mean_levels <- total_marker_dose / N1_levels
+
+results_N1 <- vector("list", length(N1_levels))
+
+for (i in seq_along(N1_levels)) {
+  results_N1[[i]] <- simulate_fovs_repeated(
+    n_rep = 5000,
+    n_target = 10000,
+    N1 = N1_levels[i],
+    tablet_mean = tablet_mean_levels[i],
+    tablet_cv = 0.04,
+    region_side = 1,
+    fov_size = 0.1,
+    n_cal = 20,
+    n_ext = 20,
+    omega = 2
+  )$summary
+}
+
+summary_N1 <- bind_rows(results_N1)
+```
+
+```{r}
+summary_N1 %>%
+  select(
+    N1,
+    tablet_cv,
+    tablet_mean,
+    mean_true_conc,
+    mean_estimated_conc,
+    mean_theoretical_error,
+    empirical_cv,
+    mean_bias,
+    rmse,
+    mean_effort,
+  ) %>%
+  knitr::kable(digits = 2, caption = "Simulation results across numbers of tablets")
+```
+
+## Plot: number of tablets and total error
+
+```{r}
+ggplot(summary_N1, aes(x = N1, y = mean_theoretical_error)) +
+  geom_line(linewidth = 1, colour = "darkgreen") +
+  geom_point(size = 3, colour = "darkgreen") +
+  labs(
+    title = "Effect of number of tablets on total error",
+    x = "Number of tablets (N1)",
+    y = "Mean total error (%)"
+  )
+```
+
+## Error decomposition across numbers of tablets
+```{r}
+summary_N1 %>%
+  select(
+    N1,
+    mean_tablet_term,
+    mean_calibration_term,
+    mean_marker_term,
+    mean_theoretical_error
+  ) %>%
+  knitr::kable(digits = 2, caption = "Error decomposition across numbers of tablets")
+```
+
+```{r}
+summary_N1 <- summary_N1 %>%
+  mutate(
+    tablet_share = mean_tablet_term^2 / mean_theoretical_error^2,
+    calibration_share = mean_calibration_term^2 / mean_theoretical_error^2,
+    marker_share = mean_marker_term^2 / mean_theoretical_error^2
+  )
+```
+
+
+```{r}
+summary_N1_share_long <- summary_N1 %>%
+  select(
+    N1,
+    tablet_share,
+    calibration_share,
+    marker_share
+  ) %>%
+  tidyr::pivot_longer(
+    cols = c(tablet_share, calibration_share, marker_share),
+    names_to = "component",
+    values_to = "share"
+  )
+```
+
+
+```{r}
+ggplot(summary_N1_share_long, aes(x = factor(N1), y = share, fill = component)) +
+  geom_col() +
+  labs(
+    title = "Relative contributions of error components across numbers of tablets",
+    x = "Number of tablets (N1)",
+    y = "Proportion of total error",
+    fill = "Component"
+  )
+```
+
+# Target-to-marker ratio analysis
+
+$$
+u = \frac{n_{\text{target}}}{N_1 \times \mu_{\text{tablet}}}
+$$
+```{r, eval = FALSE}
+set.seed(456)
+
+ratio_levels <- c(1, 2, 4, 6, 8, 10, 15)
+n_target <- 10000
+
+results_ratio <- vector("list", length(ratio_levels))
+
+for (i in seq_along(ratio_levels)) {
+  current_ratio <- ratio_levels[i]
+  current_tablet_mean <- n_target / current_ratio
+  
+  results_ratio[[i]] <- simulate_fovs_repeated(
+    n_rep = 5000,
+    n_target = n_target,
+    N1 = 1,
+    tablet_mean = current_tablet_mean,
+    tablet_cv = 0.04,
+    region_side = 1,
+    fov_size = 0.1,
+    n_cal = 20,
+    n_ext = 20,
+    omega = 2
+  )$summary
+}
+
+summary_ratio <- bind_rows(results_ratio)
+summary_ratio$ratio <- ratio_levels
+```
+
+
+## Simulation results across target-to-marker ratio levels
+
+```{r}
+summary_ratio %>%
+  select(
+    ratio,
+    N1,
+    tablet_cv,
+    tablet_mean,
+    mean_true_conc,
+    mean_estimated_conc,
+    mean_theoretical_error,
+    empirical_cv,
+    mean_bias,
+    rmse,
+    mean_effort,
+    failure_rate
+  ) %>%
+  knitr::kable(digits = 2, caption = "Simulation results across target-to-marker ratio levels")
+```
+
+## Plot: target-to-marker ratio vs total error
+
+```{r}
+ggplot(summary_ratio, aes(x = ratio, y = mean_theoretical_error)) +
+  geom_line(linewidth = 1, colour = "purple") +
+  geom_point(size = 3, colour = "purple") +
+  labs(
+    title = "Effect of target-to-marker ratio on total error",
+    x = "Target-to-marker ratio",
+    y = "Mean total error (%)"
+  )
+```
+
+## Error decomposition across target-to-marker ratio levels
+
+```{r}
+summary_ratio %>%
+  select(
+    ratio,
+    mean_tablet_term,
+    mean_calibration_term,
+    mean_marker_term,
+    mean_theoretical_error
+  ) %>%
+  knitr::kable(digits = 2, caption = "Error decomposition across target-to-marker ratio levels")
+```
+
+
+```{r}
+summary_ratio <- summary_ratio %>%
+  mutate(
+    tablet_share = mean_tablet_term^2 / mean_theoretical_error^2,
+    calibration_share = mean_calibration_term^2 / mean_theoretical_error^2,
+    marker_share = mean_marker_term^2 / mean_theoretical_error^2
+  )
+```
+
+
+```{r}
+summary_ratio_share_long <- summary_ratio %>%
+  select(
+    ratio,
+    tablet_share,
+    calibration_share,
+    marker_share
+  ) %>%
+  tidyr::pivot_longer(
+    cols = c(tablet_share, calibration_share, marker_share),
+    names_to = "component",
+    values_to = "share"
+  )
+```
+
+
+```{r}
+ggplot(summary_ratio_share_long, aes(x = factor(ratio), y = share, fill = component)) +
+  geom_col() +
+  labs(
+    title = "Relative contributions of error components across ratio levels",
+    x = "Target-to-marker ratio",
+    y = "Proportion of total error",
+    fill = "Component"
+  )
+```
+
+# Presentation slides outline
+## Slide 1. Title
+
+- Project title
+The effect of tablet error on the precision of estimating the absolute abundance
+  of microfossils in the FOVS method
+- Name: Menghan Fu
+- Student ID: a1941288
+- Supervisor: Anthony Mays
+
+## Slide 2. Introduction
+What is this project about?
+
+- Specifically focuses on one part of its error structure: tablet error.
+- To understand when tablet error matters and when it may be ignored.
+
+Why do we care about fossils (Motivation)?
+
+
+## Slide 3. Research Questions
+
+- Under what conditions does tablet error become an important part of total FOVS error?
+- How does the importance of tablet error change under different experimental designs and sample conditions?
+- If tablet error is large, are there design adjustments that can reduce its impact?
+
+## Slide 4. Background
+
+- absolute abundance
+- exotic marker method
+- FOVS overview
+
+## Slide 5. Background
+
+- FOVS error structure
+- tablet error definition
+- tablet CV
+- research gap
+
+## Slide 6. Methods Overview
+
+How to do the simulation? (Place a simple workflow diagram)
+
+- Set scenario parameters 
+- generate fixed-count targets with random locations
+- generate random per-tablet marker doses
+- sum tablet doses and generate marker locations
+- perform calibration and extrapolation counts
+- calculate concentration and error components
+- repeat simulations and summarise results
+
+## Slide 7. Methods: Scenario Design
+
+Tablet CV scenario
+
+- Fixed: n_target = 10000, N1 = 1, tablet_mean = 5000
+- Varied: tablet_cv
+
+N1 scenario
+
+- Fixed: total marker dose = 5000, tablet_cv = 0.04, n_target
+- Varied: N1
+- tablet_mean = total marker dose/ N1
+
+Ratio scenario
+
+- Fixed: n_target, N1 = 1, tablet_cv = 0.04
+- Varied: tablet_mean (This changes the expected target-to-marker ratio)
+
+## Slide 8. Output Metrics
+
+- Mean theoretical error
+- empirical_cv
+- RMSE
+- Mean effort
+- Error decomposition
+- relative contribution of each error component
+
+## Slide 9. Results: Tablet CV Scenario
+
+Figure:
+
+- total error vs tablet CV
+- relative contributions of error components across tablet CV levels
+
+Key message:
+
+- total error increases as tablet CV increases
+- tablet_share becomes larger at higher tablet CV
+- tablet error can become a dominant source of total error
+
+## Slide 10. Results: N1 Scenario
+Figure:
+
+- total error vs N1
+- relative contributions across N1
+
+Key message:
+
+- increasing N1 reduces total error
+- after revising the scenario to keep total marker dose fixed, increasing N1 mainly reduces tablet-related uncertainty
+- marker uncertainty no longer improves automatically
+
+## Slide 11. Results: Ratio Scenario
+Figure:
+
+- total error vs ratio
+- relative contributions across ratio
+
+Key message:
+
+- total error increases as the target-to-marker ratio increases
+- this increase is mainly driven by the marker term
+- tablet term stays roughly constant, but its relative contribution declines
+
+## Slide 12. Discussion & Conclusion
+
+- Tablet error is not equally important under all conditions.
+- Its importance changes with:
+  - tablet dose variation
+  - number of tablets
+  - target-to-marker ratio
+- Increasing the number of tablets can reduce tablet-related uncertainty.
+- When tablet CV is high, tablet uncertainty becomes more important.
+- When the target-to-marker ratio is high, marker counting uncertainty becomes dominant.
+
+
+

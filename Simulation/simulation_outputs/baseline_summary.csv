@@ -1,0 +1,2 @@
+"N1","tablet_mean","tablet_cv","mean_true_conc","mean_estimated_conc","empirical_sd","empirical_cv","mean_tablet_term","mean_calibration_term","mean_marker_term","mean_theoretical_error","mean_bias","mean_percent_bias","rmse","mean_effort","failure_rate"
+1,5000,0,10000,10011.0908096135,347.692857017497,3.47307664698847,0,2.19774425098712,3.16398850840501,3.86402667258189,11.0908096135389,0.110908096135389,347.834947660969,3079.1914,0
